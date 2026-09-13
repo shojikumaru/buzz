@@ -739,7 +739,9 @@ export function AppSidebar({
                         !c.archivedAt,
                     ) && (
                       <ThreadFlags
-                        channelId={selectedChannelId}
+                        channel={
+                          channels.find((c) => c.id === selectedChannelId)!
+                        }
                         relayUrl={activeCommunity.relayUrl}
                         pubkey={currentPubkey}
                         onOpen={onOpenSearchResult}

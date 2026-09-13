@@ -1,3 +1,4 @@
+import { channelMembersKey } from "./channelMembersKey";
 import * as React from "react";
 import {
   useMutation,
@@ -648,7 +649,7 @@ export function useChannelMembersQuery(
 ) {
   return useQuery({
     enabled: enabled && channelId !== null,
-    queryKey: ["channels", channelId ?? "none", "members"],
+    queryKey: channelMembersKey(channelId ?? "none"),
     queryFn: async () => {
       if (!channelId) {
         throw new Error("No channel selected.");
