@@ -1157,6 +1157,19 @@ async fn query_events_authed(
     )
     .await?;
 
+    if raw_filters
+        .iter()
+        .any(|raw| raw.get("thread_flags").is_some())
+    {
+        if raw_filters.len() != 1 {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "thread flags requires one filter",
+            ));
+        }
+        return super::thread_flags::query(state, tenant, &pubkey_bytes, &raw_filters[0]).await;
+    }
+
     if filters.iter().any(|f| f.search.is_some()) {
         if has_mixed_search_filters(&filters) {
             return Err(api_error(
