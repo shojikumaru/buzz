@@ -16,4 +16,3 @@
 Uncertainties: kind-9 semantics and the thread_metadata writer/backfill ordering are taken from context, not verifiable in this brief; relay-side overlay ingestion (whether `query_relay` persists synthetic events) is assumed to match the existing 39005/39006 pattern and is unconfirmed here.
 
 VERDICT: ISSUES
-

@@ -47,4 +47,3 @@
   ## Verdict
 
   **Approve.** No blocking or medium-severity defects found in the diff. Two low items (metric label reuse; bridge-path reachability pending the relay integration rerun) and one cosmetic note. Merge is reasonable once the pending relay test rerun confirms finding 2's integration path end-to-end.
-

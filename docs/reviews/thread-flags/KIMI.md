@@ -53,4 +53,3 @@
   ## Verdict
 
   **Approve with minor corrections.** No missing security boundary and no speculative redesign needed. Findings 1 and 2 must be pinned in the design text before implementation (they are the two places where two engineers would build different behavior from the same words); findings 3–5 are one-line contract clarifications backed by tests already in the plan; 6–8 are documentation-level.
-

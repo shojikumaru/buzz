@@ -25,4 +25,3 @@
   ### Verdict
 
   **Approve.** Every previously requested change is implemented, internally consistent across all four layers (core validation, DB SQL, relay contract, desktop client/UI), and backed by the cited passing evidence (Desktop6494, DB254 + new parity test, browser navigation, relay smoke, baseline failure attribution). The four notes above are follow-up-quality items; none blocks delivery of the PR.
-

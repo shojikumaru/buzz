@@ -3,4 +3,3 @@
 - `crates/buzz-db/src/store/thread_flags.rs:29-33` (NOT EXISTS predicate) and `crates/buzz-db/src/store/thread_flags.rs:~221-233` (parity test `cases` vector) — the parity pins omit the combined `root`+valid-`reply` shape and multi-bare-`e` (legacy positional inference) shapes; failure scenario: if the frozen `parse_thread_markers` resolves any such event as a reply (positional fallback or future drift), the SQL still admits it and a mid-thread reply is listed as a flaggable root with no failing test to catch the divergence.
 
 VERDICT: ISSUES
-

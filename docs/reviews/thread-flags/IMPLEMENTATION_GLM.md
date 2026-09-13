@@ -10,4 +10,3 @@
   - Correction: add `#[serde(deny_unknown_fields)]` to `Cursor`.
 
 VERDICT: ISSUES
-

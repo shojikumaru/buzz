@@ -1,4 +1,7 @@
-# Review dispositions (in progress)
+# Initial design review dispositions
+
+Historical design-stage record. Root-metadata assumptions below were superseded
+by live ingest evidence; see FINAL_TRIAGE.md for final adjudication.
 Base: block/buzz 813bbd14121edacc6cb4733301a3af12131aa10e. GitHub fork shojikumaru/buzz. Source checkout untouched. Implementer Astra/alpha-codex.
 Kimi K3: reviewed isolated brief, requested high reasoning in design scope (CLI exposes no effort flag; actual effort unverified). GLM5.2:16000 thinking,32000 max tokens. Claude Opus5:high pending.
 - Kimi1/2: accepted. Canonical SQL flags strip all FE0E/FE0F at query only, never mutate reaction history. active=(coordinate OR progress) AND NOT complete; coordinate/progress also exclude complete; complete requires complete; all any flag. Payload retains all flags.

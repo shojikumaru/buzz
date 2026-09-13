@@ -12,7 +12,7 @@
 
 ## Reviewer metadata
 
-- **Model (as reported by the harness):** `claude-opus-5` (displayed name "Opus 5"). 
+- **Model (as reported by the harness):** `claude-opus-5` (displayed name "Opus 5").
 - **Effort / reasoning level:** not exposed to me by this harness. Per instruction I am **not inferring** one.
 - **Scope discipline:** no tools, no repo access, no delegation. I reviewed **only the pasted diff**. Every claim that depends on code outside the diff is marked `[verify]`. I could not compute the diff SHA-256 without tools, so the stated hash is unverified; I reviewed the text as pasted.
 
@@ -21,7 +21,7 @@
 ## Findings
 
 ### M1 — Polling never stops on permanent failure; unsupported-relay fallback is an unbounded history query
-**Severity:** Medium 
+**Severity:** Medium
 **Location:** `desktop/src/features/thread-flags/ThreadFlags.tsx` (`FlagResults` effect) + `desktop/src-tauri/src/commands/messages/thread_flags.rs::decode`
 
 **Evidence:** The refresh timer is installed unconditionally and is keyed only on `request` identity:
@@ -30,7 +30,7 @@ useEffect(() => { void request(null);
   const refresh = () => { if (!document.hidden) void request(null); };
   const interval = setInterval(refresh, 30_000); ... }, [request]);
 ```
-`error` is not part of that effect and there is no terminal state. So a `FORBIDDEN "channel unavailable"`, a 500, or `"This relay does not support thread flags yet"` all keep firing a full request every 30 s (plus one on every `visibilitychange` back to visible, undebounced) for as long as the panel is mounted. 
+`error` is not part of that effect and there is no terminal state. So a `FORBIDDEN "channel unavailable"`, a 500, or `"This relay does not support thread flags yet"` all keep firing a full request every 30 s (plus one on every `visibilitychange` back to visible, undebounced) for as long as the panel is mounted.
 
 Second half: on a relay that predates the extension, the filter `{"kinds":[9],"#h":[channel],"thread_flags":{...}}` carries **no `limit` and no `since`**. If the old relay's filter deserializer ignores the unknown `thread_flags` key (rather than rejecting it) `[verify against the nostr Filter deserializer + bridge.rs raw→typed conversion]`, that request is a plain unbounded kind-9 channel history query, repeated every 30 s. `decode` then correctly reports "does not support", so the user-visible behaviour is right while the network behaviour is not.
 
@@ -39,7 +39,7 @@ Second half: on a relay that predates the extension, the filter `{"kinds":[9],"#
 ---
 
 ### M2 — Composite cursor truncates to whole seconds; sub-second `events.created_at` silently skips rows
-**Severity:** Medium (Blocker if the invariant below does not hold) 
+**Severity:** Medium (Blocker if the invariant below does not hold)
 **Location:** `crates/buzz-db/src/store/thread_flags.rs` (cursor encode/decode) ↔ `PAGE_SQL` keyset predicate
 
 **Evidence:** The emitted cursor is `created_at: time.timestamp()` (i64 seconds) and is re-bound as `DateTime::from_timestamp(c.created_at, 0)`, i.e. `.000000`. The keyset predicate is exact-equality based:
@@ -55,7 +55,7 @@ In practice Nostr `created_at` is whole seconds and the test fixture inserts `fr
 ---
 
 ### M3 — SQL re-derives channel authorization; the `visibility = 'open'` and role-based branches are untested
-**Severity:** Medium 
+**Severity:** Medium
 **Location:** `crates/buzz-db/src/store/thread_flags.rs` `PAGE_SQL` WHERE clause; `crates/buzz-relay/src/api/thread_flags.rs`
 
 **Evidence:** The API gate uses the canonical `get_accessible_channel_ids`, then the row query re-implements the policy independently:
@@ -69,7 +69,7 @@ Because both must pass, the composition is safe in the permissive direction (it 
 ---
 
 ### M4 — No end-to-end execution evidence; the scope-assert URL contract is unverified
-**Severity:** Medium 
+**Severity:** Medium
 **Location:** `desktop/src-tauri/src/commands/messages/thread_flags.rs::get_thread_flag_page`, `desktop/src/features/sidebar/ui/AppSidebar.tsx`
 
 **Evidence:** The listed evidence is entirely `cargo check` / typecheck / unit-and-integration test runs, plus "No deployment". The wiring that no test covers is:
@@ -83,7 +83,7 @@ fed from `relayUrl={activeCommunity.relayUrl}` in the sidebar. If `activeCommuni
 ---
 
 ### M5 — Writer-pool read on a mislabeled operation, unindexable predicate, and an early return that may bypass downstream limiting
-**Severity:** Medium 
+**Severity:** Medium
 **Location:** `crates/buzz-db/src/store/thread_flags.rs` (`acquire_writer(..., WriterOperation::SubscriptionHistory)`), `PAGE_SQL`; `crates/buzz-relay/src/api/bridge.rs` (new branch)
 
 **Evidence:** Three compounding facts. (1) Every poll takes a **writer** connection under an unrelated label, `SubscriptionHistory`, so this traffic is misattributed in whatever metrics that enum drives. Reading the primary is defensible for the revocation fence, but the label is not. (2) The predicate is unindexable — `strpos(lower(e.content), lower($5)) > 0` plus `regexp_replace` over full `content`, with `array_agg` over a `reactions ⋈ events ⋈ thread_metadata ⋈ channels` join and no statement timeout. (3) The new branch returns **before** the rest of `query_events_authed`:
@@ -97,7 +97,7 @@ If any per-tenant rate limiting, quota accounting, or audit logging lives after 
 ---
 
 ### M6 — The only test covering the acceptance criteria is `#[ignore]`
-**Severity:** Medium 
+**Severity:** Medium
 **Location:** `crates/buzz-db/src/store/thread_flags.rs` `#[ignore = "requires Postgres"] async fn flags_history_auth_and_deletion`
 
 **Evidence:** This single test is what covers depth-0 restriction, legacy-metadata exclusion, cross-tenant isolation, completion-wins, removal-recomputes, deletion, archive, and membership revocation — i.e. nearly the whole fixed acceptance list. It is excluded from a default `cargo test`. Everything else is a small unit test. The reported run ("DB 253 test run failed only our last-owner fixture") implies it was run locally with `--ignored`.
