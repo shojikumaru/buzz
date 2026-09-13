@@ -48,6 +48,8 @@ pub mod reminder;
 pub mod replaceable;
 /// Thread metadata persistence.
 pub mod thread;
+/// Authorized root flag projection.
+pub mod thread_flags;
 /// Per-community usage rollup queries for Prometheus gauges.
 pub mod usage;
 /// User profile persistence.

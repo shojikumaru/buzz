@@ -1,5 +1,6 @@
 // biome-ignore format: keep compact to stay within file size limit
 import * as React from "react";
+import { ThreadFlags } from "@/features/thread-flags/ThreadFlags";
 import { FeatureGate } from "@/shared/features";
 import { SidebarDndContext } from "@/features/sidebar/ui/SidebarDnd";
 
@@ -619,6 +620,23 @@ export function AppSidebar({
                       onLeaveChannel={requestLeaveChannel}
                     />
                   ) : null}
+                  {selectedView === "channel" &&
+                    selectedChannelId &&
+                    activeCommunity &&
+                    currentPubkey &&
+                    channels.some(
+                      (c) =>
+                        c.id === selectedChannelId &&
+                        c.channelType === "stream" &&
+                        !c.archivedAt,
+                    ) && (
+                      <ThreadFlags
+                        channelId={selectedChannelId}
+                        relayUrl={activeCommunity.relayUrl}
+                        pubkey={currentPubkey}
+                        onOpen={onOpenSearchResult}
+                      />
+                    )}
                   <SidebarDndContext
                     channels={channels}
                     sections={channelSections}

@@ -40,6 +40,8 @@ pub mod private_managed_agent;
 pub mod relay;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
 pub mod tenant;
+/// Authenticated root reaction projection contract.
+pub mod thread_flags;
 /// Schnorr signature and event ID verification.
 pub mod verification;
 

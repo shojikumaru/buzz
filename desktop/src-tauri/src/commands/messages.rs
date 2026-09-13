@@ -2,6 +2,8 @@ use nostr::{Event, EventId, Keys, PublicKey};
 use tauri::{AppHandle, State};
 
 mod forum;
+mod thread_flags;
+pub use thread_flags::get_thread_flag_page;
 
 use forum::{
     apply_link_preview_suppression, fetch_agent_owner_pubkeys, link_preview_suppression_targets,
