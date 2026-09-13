@@ -58,7 +58,7 @@ pub async fn get_thread_flag_page(
     let events = query_relay_at_with_keys(
         &state,
         &api,
-        &[serde_json::json!({"kinds":[9], "#h":[&channel], "thread_flags":&query})],
+        &[serde_json::json!({"kinds":[9], "#h":[&channel], "limit":1, "thread_flags":&query})],
         &keys,
         None,
     )

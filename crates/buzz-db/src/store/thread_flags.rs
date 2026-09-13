@@ -9,7 +9,8 @@ use sqlx::Row;
 use uuid::Uuid;
 
 // No post-limit classification: one grouped candidate per root, all predicates
-// before the limit+1 probe. Metadata-less events fail closed (not known roots).
+// before the limit+1 probe. Roots without replies have no metadata in live ingest.
+// The JSON predicate mirrors nip10::parse_thread_markers; parity tests pin it.
 const PAGE_SQL: &str = r#"
 WITH flagged AS (
  SELECT e.id, e.pubkey, e.created_at,
@@ -18,11 +19,16 @@ WITH flagged AS (
  FROM reactions r
  JOIN events e ON e.community_id = r.community_id
    AND e.created_at = r.event_created_at AND e.id = r.event_id
- JOIN thread_metadata tm ON tm.community_id = e.community_id
-   AND tm.event_created_at = e.created_at AND tm.event_id = e.id AND tm.depth = 0
+ LEFT JOIN thread_metadata tm ON tm.community_id = e.community_id
+   AND tm.event_created_at = e.created_at AND tm.event_id = e.id
  JOIN channels c ON c.community_id = e.community_id AND c.id = e.channel_id
  WHERE e.community_id = $1 AND e.channel_id = $2 AND e.kind = 9
    AND e.deleted_at IS NULL AND r.removed_at IS NULL
+   AND (tm.event_id IS NULL OR tm.depth = 0)
+   AND NOT EXISTS (
+     SELECT 1 FROM jsonb_array_elements(e.tags) tag
+     WHERE tag->>0 = 'e' AND tag->>3 = 'reply'
+       AND tag->>1 ~ '^[0-9a-fA-F]{64}$')
    AND c.deleted_at IS NULL AND c.archived_at IS NULL
    AND (c.visibility = 'open' OR EXISTS (
      SELECT 1 FROM channel_members cm WHERE cm.community_id = c.community_id
@@ -62,11 +68,24 @@ impl Db {
             crate::observability::WriterOperation::SubscriptionHistory,
         )
         .await?;
-        let timestamp = query
-            .cursor
-            .as_ref()
-            .and_then(|c| DateTime::from_timestamp(c.created_at, 0));
-        let id = query.cursor.as_ref().and_then(|c| hex::decode(&c.id).ok());
+        let (timestamp, id) = match &query.cursor {
+            Some(c) => (
+                Some(
+                    DateTime::from_timestamp(c.created_at, 0)
+                        .ok_or_else(|| crate::DbError::InvalidData("invalid cursor time".into()))?,
+                ),
+                Some(
+                    hex::decode(&c.id)
+                        .map_err(|_| crate::DbError::InvalidData("invalid cursor id".into()))?,
+                ),
+            ),
+            None => (None, None),
+        };
+        // Bound expensive substring scans without changing pool-wide policy.
+        let mut tx = sqlx::Connection::begin(&mut *conn).await?;
+        sqlx::query("SET LOCAL statement_timeout = '5s'")
+            .execute(&mut *tx)
+            .await?;
         let records = sqlx::query(PAGE_SQL)
             .bind(community.as_uuid())
             .bind(channel)
@@ -77,8 +96,9 @@ impl Db {
             .bind(id)
             .bind(query.mode.as_str())
             .bind(i64::from(query.limit) + 1)
-            .fetch_all(&mut *conn)
+            .fetch_all(&mut *tx)
             .await?;
+        tx.commit().await?;
         let has_more = records.len() > query.limit as usize;
         let mut rows = Vec::new();
         for record in records.into_iter().take(query.limit as usize) {
@@ -180,6 +200,163 @@ mod postgres_tests {
     }
     #[tokio::test]
     #[ignore = "requires Postgres"]
+    async fn metadata_less_root_predicate_matches_canonical_nip10_parser() {
+        let db = Db::new(&DbConfig {
+            database_url: crate::test_support::database_url(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let tenant = community(&db).await;
+        let keys = Keys::generate();
+        let owner = keys.public_key().to_bytes();
+        let channel = create_channel(
+            &db.pool,
+            tenant,
+            "marker-parity",
+            ChannelType::Stream,
+            ChannelVisibility::Open,
+            None,
+            &owner,
+            None,
+        )
+        .await
+        .unwrap();
+        let target = "a".repeat(64);
+        let upper = "B".repeat(64);
+        let cases: Vec<Vec<Vec<&str>>> = vec![
+            vec![],
+            vec![vec!["e", &target]],
+            vec![vec!["e", &target, "reply"]],
+            vec![vec!["e", &target], vec!["e", &upper]],
+            vec![
+                vec!["e", &target, "", "root"],
+                vec!["e", &upper, "", "reply"],
+            ],
+            vec![vec!["e", &target, "", "root"]],
+            vec![vec!["e", &target, "", "reply"]],
+            vec![vec!["e", &upper, "", "reply"]],
+            vec![vec!["e", "bad", "", "reply"]],
+            vec![vec!["e", &target, "", "Reply"]],
+            vec![vec!["e", &target, "", "REPLY"]],
+            vec![
+                vec!["e", &target, "", "reply"],
+                vec!["e", &upper, "", "reply"],
+            ],
+            vec![vec!["e", &target, "", "reply", &upper]],
+            vec![
+                vec!["e", &target, "", "root"],
+                vec!["e", "bad", "", "reply"],
+            ],
+        ];
+        let mut expected = Vec::new();
+        for (i, tags) in cases.into_iter().enumerate() {
+            let tags: Vec<nostr::Tag> = tags
+                .into_iter()
+                .map(|parts| nostr::Tag::parse(parts).unwrap())
+                .collect();
+            let event = EventBuilder::new(Kind::Custom(9), format!("case {i}"))
+                .tags(tags)
+                .sign_with_keys(&keys)
+                .unwrap();
+            if buzz_core::nip10::parse_thread_markers(&event.tags)
+                .resolve()
+                .is_none()
+            {
+                expected.push(event.id.to_hex());
+            }
+            insert(&db, tenant, channel.id, &event, None).await;
+            react(&db, tenant, &event, "🚩").await;
+        }
+        let query: Query = serde_json::from_str("{}").unwrap();
+        let mut actual: Vec<String> = db
+            .get_thread_flag_page(tenant, channel.id, &owner, &query)
+            .await
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        actual.sort();
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn open_channel_matches_canonical_authority_for_non_member() {
+        let db = Db::new(&DbConfig {
+            database_url: crate::test_support::database_url(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let tenant = community(&db).await;
+        let keys = Keys::generate();
+        let owner = keys.public_key().to_bytes();
+        let visitor = [3; 32];
+        let channel = create_channel(
+            &db.pool,
+            tenant,
+            "open-flags",
+            ChannelType::Stream,
+            ChannelVisibility::Open,
+            None,
+            &owner,
+            None,
+        )
+        .await
+        .unwrap();
+        let root = EventBuilder::new(Kind::Custom(9), "open root")
+            .sign_with_keys(&keys)
+            .unwrap();
+        insert(&db, tenant, channel.id, &root, None).await;
+        react(&db, tenant, &root, "🚩").await;
+        let query: Query = serde_json::from_str("{}").unwrap();
+        assert!(db
+            .get_accessible_channel_ids(tenant, &visitor)
+            .await
+            .unwrap()
+            .contains(&channel.id));
+        let page = db
+            .get_thread_flag_page(tenant, channel.id, &visitor, &query)
+            .await
+            .unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.rows[0].created_at, root.created_at.as_secs() as i64);
+        let stored: DateTime<Utc> =
+            sqlx::query_scalar("SELECT created_at FROM events WHERE community_id=$1 AND id=$2")
+                .bind(tenant.as_uuid())
+                .bind(root.id.as_bytes().as_slice())
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stored.timestamp_subsec_nanos(),
+            0,
+            "canonical signed Nostr timestamps are whole seconds"
+        );
+        sqlx::query("UPDATE channels SET visibility='private' WHERE community_id=$1 AND id=$2")
+            .bind(tenant.as_uuid())
+            .bind(channel.id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(!db
+            .get_accessible_channel_ids(tenant, &visitor)
+            .await
+            .unwrap()
+            .contains(&channel.id));
+        assert!(db
+            .get_thread_flag_page(tenant, channel.id, &visitor, &query)
+            .await
+            .unwrap()
+            .rows
+            .is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
     async fn flags_history_auth_and_deletion() {
         let db = Db::new(&DbConfig {
             database_url: crate::test_support::database_url(),
@@ -231,7 +408,11 @@ mod postgres_tests {
             react(&db, tenant, root, "🔴").await;
         }
         let reply = make("reply");
-        let missing = make("missing metadata reply");
+        let missing = EventBuilder::new(Kind::Custom(9), "missing metadata reply")
+            .tags([nostr::Tag::parse(["e", &roots[0].id.to_hex(), "", "reply"]).unwrap()])
+            .custom_created_at(stamp)
+            .sign_with_keys(&keys)
+            .unwrap();
         insert(&db, tenant, channel.id, &reply, Some(1)).await;
         insert(&db, tenant, channel.id, &missing, None).await;
         react(&db, tenant, &reply, "🚩").await;

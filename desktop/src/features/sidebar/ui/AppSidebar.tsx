@@ -620,23 +620,6 @@ export function AppSidebar({
                       onLeaveChannel={requestLeaveChannel}
                     />
                   ) : null}
-                  {selectedView === "channel" &&
-                    selectedChannelId &&
-                    activeCommunity &&
-                    currentPubkey &&
-                    channels.some(
-                      (c) =>
-                        c.id === selectedChannelId &&
-                        c.channelType === "stream" &&
-                        !c.archivedAt,
-                    ) && (
-                      <ThreadFlags
-                        channelId={selectedChannelId}
-                        relayUrl={activeCommunity.relayUrl}
-                        pubkey={currentPubkey}
-                        onOpen={onOpenSearchResult}
-                      />
-                    )}
                   <SidebarDndContext
                     channels={channels}
                     sections={channelSections}
@@ -745,6 +728,23 @@ export function AppSidebar({
                       onLeaveChannel={requestLeaveChannel}
                     />
                   </SidebarDndContext>
+                  {selectedView === "channel" &&
+                    selectedChannelId &&
+                    activeCommunity &&
+                    currentPubkey &&
+                    channels.some(
+                      (c) =>
+                        c.id === selectedChannelId &&
+                        c.channelType === "stream" &&
+                        !c.archivedAt,
+                    ) && (
+                      <ThreadFlags
+                        channelId={selectedChannelId}
+                        relayUrl={activeCommunity.relayUrl}
+                        pubkey={currentPubkey}
+                        onOpen={onOpenSearchResult}
+                      />
+                    )}
                   <FeatureGate feature="forum">
                     <ChannelGroupSection
                       createLabel="New forum"

@@ -20,7 +20,7 @@ const scope = {
   channelId: "channel-a",
 };
 const row = (title, flags = ["🚩", "🔴"]) => ({
-  id: title.padEnd(64, "a"),
+  id: Buffer.from(title).toString("hex").padEnd(64, "a"),
   pubkey: scope.pubkey,
   title,
   flags,
@@ -131,4 +131,48 @@ test("older pages use composite cursor; a head refresh replaces accumulated page
   app.fireEvent.click(app.getByText("Refresh flags"));
   await app.findByText("No matching threads.");
   assert.equal(app.queryByText("Older"), null);
+});
+
+test("automatic refresh does not overlap and pauses after errors until manual retry", async () => {
+  const originalInterval = globalThis.setInterval;
+  let tick;
+  globalThis.setInterval = (callback, ms, ...args) => {
+    if (ms === 30_000) tick = callback;
+    return originalInterval(callback, ms === 30_000 ? 1_000_000 : ms, ...args);
+  };
+  Object.defineProperty(document, "hidden", {
+    value: false,
+    configurable: true,
+  });
+  let calls = 0;
+  let fail;
+  try {
+    const app = await setup({
+      onOpen() {},
+      fetchPage: (s, q) => {
+        calls++;
+        return calls === 1
+          ? new Promise((_, reject) => {
+              fail = reject;
+            })
+          : Promise.resolve(page(s, q, []));
+      },
+    });
+    await app.act(async () => tick());
+    assert.equal(calls, 1, "no second request while first is pending");
+    await app.act(async () => fail(new Error("unsupported relay")));
+    await app.findByRole("alert");
+    await app.act(async () => {
+      tick();
+      document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    });
+    assert.equal(calls, 1, "no automatic request after failure");
+    app.fireEvent.click(app.getByText("Refresh flags"));
+    await app.findByText("No matching threads.");
+    assert.equal(calls, 2);
+    await app.act(async () => tick());
+    assert.equal(calls, 3, "manual recovery re-enables automatic updates");
+  } finally {
+    globalThis.setInterval = originalInterval;
+  }
 });

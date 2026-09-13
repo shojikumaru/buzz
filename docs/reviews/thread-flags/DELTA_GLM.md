@@ -1,0 +1,6 @@
+## lens: custom: Read-only changed-area review; follow brief. No tools edits or delegation. Evidence-based blocking findings and verdict.
+- `desktop/src/features/thread-flags/ThreadFlags.tsx:127` — the new `polling.current.paused = true` in the `catch` lacks the ticket guard applied in `finally`; failure scenario: user changes mode/search while an earlier request is still in flight, the abandoned request rejects after the replacement succeeds → polling stays paused and the stale error banner overrides fresh rows until a manual "Refresh flags", silently freezing flag updates (the new test only covers the sequential case, not the superseded-ticket race).
+- `crates/buzz-db/src/store/thread_flags.rs:29-33` (NOT EXISTS predicate) and `crates/buzz-db/src/store/thread_flags.rs:~221-233` (parity test `cases` vector) — the parity pins omit the combined `root`+valid-`reply` shape and multi-bare-`e` (legacy positional inference) shapes; failure scenario: if the frozen `parse_thread_markers` resolves any such event as a reply (positional fallback or future drift), the SQL still admits it and a mid-thread reply is listed as a flaggable root with no failing test to catch the divergence.
+
+VERDICT: ISSUES
+

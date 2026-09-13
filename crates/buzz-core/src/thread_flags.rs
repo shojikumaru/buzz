@@ -138,6 +138,7 @@ impl Page {
             if !valid_id(&row.id)
                 || !valid_id(&row.pubkey)
                 || row.created_at < 0
+                || chrono::DateTime::from_timestamp(row.created_at, 0).is_none()
                 || row.title.chars().count() > 240
                 || row.flags.is_empty()
                 || row.flags

@@ -11,10 +11,13 @@ fn parse(raw: &Value) -> Result<(uuid::Uuid, Query), String> {
     let object = raw.as_object().ok_or("thread flags: expected object")?;
     if object
         .keys()
-        .any(|k| !["#h", "kinds", "thread_flags"].contains(&k.as_str()))
+        .any(|k| !["#h", "kinds", "limit", "thread_flags"].contains(&k.as_str()))
         || raw["kinds"] != serde_json::json!([9])
     {
         return Err("thread flags: requires kinds [9] and no other filter extensions".into());
+    }
+    if raw.get("limit") != Some(&serde_json::json!(1)) {
+        return Err("thread flags: requires legacy safety limit 1".into());
     }
     let channels = raw["#h"]
         .as_array()
@@ -77,11 +80,14 @@ mod tests {
     use super::*;
     #[test]
     fn strict_single_channel_contract() {
-        let valid =
-            serde_json::json!({"kinds":[9], "#h":[uuid::Uuid::new_v4()], "thread_flags":{}});
+        let valid = serde_json::json!({"kinds":[9], "limit":1, "#h":[uuid::Uuid::new_v4()], "thread_flags":{}});
         assert!(parse(&valid).is_ok());
+        let mut missing_limit = valid.clone();
+        missing_limit.as_object_mut().unwrap().remove("limit");
+        assert!(parse(&missing_limit).is_err());
         for (key, value) in [
             ("search", serde_json::json!("x")),
+            ("limit", serde_json::json!(2)),
             ("kinds", serde_json::json!([9, 7])),
             ("#h", serde_json::json!([])),
             ("thread_flags", serde_json::json!({"limit":101})),

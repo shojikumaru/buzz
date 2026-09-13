@@ -91,9 +91,11 @@ function FlagResults({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const ticket = useRef(0);
+  const polling = useRef({ paused: false, busy: false });
   const request = useCallback(
     async (previous: FlagPage | null) => {
       const current = ++ticket.current;
+      polling.current = { paused: false, busy: true };
       setBusy(true);
       setError(null);
       if (!previous) {
@@ -122,9 +124,13 @@ function FlagResults({
         setRows([]);
         setPage(null);
         setPages(0);
+        polling.current.paused = true;
         setError(e instanceof Error ? e.message : String(e));
       } finally {
-        if (ticket.current === current) setBusy(false);
+        if (ticket.current === current) {
+          polling.current.busy = false;
+          setBusy(false);
+        }
       }
     },
     [channelId, relayUrl, pubkey, mode, q, fetchPage],
@@ -132,7 +138,8 @@ function FlagResults({
   useEffect(() => {
     void request(null);
     const refresh = () => {
-      if (!document.hidden) void request(null);
+      if (!document.hidden && !polling.current.paused && !polling.current.busy)
+        void request(null);
     };
     const interval = setInterval(refresh, 30_000);
     document.addEventListener("visibilitychange", refresh);
@@ -158,7 +165,7 @@ function FlagResults({
       {busy && <p role="status">Loading flags…</p>}
       {error && (
         <p role="alert" className="text-destructive">
-          {error}
+          {error} Automatic refresh paused; use Refresh flags to retry.
         </p>
       )}
       {!busy && !error && rows.length === 0 && <p>No matching threads.</p>}
@@ -189,7 +196,7 @@ function FlagResults({
               <span>
                 {row.flags.map((f) => (f === "☑" ? "☑️" : f)).join(" ")}{" "}
               </span>
-              <span>{row.title.trim() || "Untitled thread"}</span>
+              <bdi>{row.title.trim() || "Untitled thread"}</bdi>
             </button>
           </li>
         ))}

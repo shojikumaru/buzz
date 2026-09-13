@@ -17,7 +17,11 @@ fi
 
 GH_USER=$(gh api user --jq .login)
 BRANCH="agent-screenshots/${GH_USER}"
-REPO="block/buzz"
+REPO="${GH_REPO:-block/buzz}"
+case "$(git remote get-url --push origin)" in
+  "https://github.com/${REPO}"|"https://github.com/${REPO}.git"|"git@github.com:${REPO}"|"git@github.com:${REPO}.git") ;;
+  *) echo "error: origin push URL must match ${REPO}" >&2; exit 1 ;;
+esac
 
 # macOS ships bash 3.2, which lacks mapfile — build the array with read.
 PNGS=()
@@ -56,7 +60,11 @@ if git rev-parse "origin/${BRANCH}" >/dev/null 2>&1; then
   PARENT_ARGS=(-p "origin/${BRANCH}")
 fi
 # ${arr[@]+...} guards the empty-array case, which trips set -u on bash 3.2.
-COMMIT=$(git commit-tree "$TREE" ${PARENT_ARGS[@]+"${PARENT_ARGS[@]}"} -m "screenshots: PR #${PR}")
+SCREENSHOT_AUTHOR_NAME=$(git config user.name || true)
+SCREENSHOT_AUTHOR_EMAIL=$(git config user.email || true)
+: "${SCREENSHOT_AUTHOR_NAME:?configure screenshot commit author}"
+: "${SCREENSHOT_AUTHOR_EMAIL:?configure screenshot commit email}"
+COMMIT=$(git commit-tree "$TREE" ${PARENT_ARGS[@]+"${PARENT_ARGS[@]}"} -m "screenshots: PR #${PR}" -m "Signed-off-by: ${SCREENSHOT_AUTHOR_NAME} <${SCREENSHOT_AUTHOR_EMAIL}>")
 git push --force-with-lease origin "${COMMIT}:refs/heads/${BRANCH}"
 
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${COMMIT}"
