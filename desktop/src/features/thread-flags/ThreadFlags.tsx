@@ -1,37 +1,76 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { channelMembersKey } from "@/features/channels/channelMembersKey";
+import { useLoadedProfiles } from "./useLoadedProfiles";
+import { useMemo, useState } from "react";
+import { formatTimelineMessages } from "@/features/messages/lib/formatTimelineMessages";
+import { channelMessagesKey } from "@/features/messages/lib/messageQueryKeys";
+import { relaySelfQueryKey } from "@/features/moderation/hooks";
+import type { Channel, ChannelMember, RelayEvent } from "@/shared/api/types";
 import type { SearchHit } from "@/shared/api/searchTypes";
-import {
-  fetchFlags,
-  type FetchFlags,
-  type FlagMode,
-  type FlagPage,
-  type FlagRow,
-  type FlagScope,
-} from "./api";
+import { type FlagMode, selectLoadedFlags } from "./loadedFlags";
+import { useCachedQuery } from "./useCachedQuery";
 
-type Props = FlagScope & {
+const EMPTY_EVENTS: RelayEvent[] = [];
+type Props = {
+  channel: Channel;
+  relayUrl: string;
+  pubkey: string;
   onOpen: (hit: SearchHit, query: string) => void;
-  fetchPage?: FetchFlags;
 };
 
-/** A keyed, ephemeral view of root reactions. No process-state or archive mutation. */
 export function ThreadFlags(props: Props) {
+  if (
+    props.channel.archivedAt ||
+    props.channel.channelType !== "stream" ||
+    (!props.channel.isMember && props.channel.visibility !== "open")
+  )
+    return null;
   return (
-    <FlagControls
-      key={JSON.stringify([props.relayUrl, props.pubkey, props.channelId])}
+    <LoadedFlags
+      key={JSON.stringify([props.relayUrl, props.pubkey, props.channel.id])}
       {...props}
     />
   );
 }
 
-function FlagControls(props: Props) {
+function LoadedFlags({ channel, pubkey, onOpen }: Props) {
   const [mode, setMode] = useState<FlagMode>("active");
-  const [text, setText] = useState("");
-  const [q, setQ] = useState("");
-  useEffect(() => {
-    const timer = setTimeout(() => setQ(text), 300);
-    return () => clearTimeout(timer);
-  }, [text]);
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(50);
+  const messagesKey = useMemo(
+    () => channelMessagesKey(channel.id),
+    [channel.id],
+  );
+  const membersKey = useMemo(() => channelMembersKey(channel.id), [channel.id]);
+  const state = useCachedQuery<RelayEvent[]>(messagesKey);
+  const members = useCachedQuery<ChannelMember[]>(membersKey);
+  const relaySelf = useCachedQuery<string | null>(relaySelfQueryKey);
+  // Error data may be a retained page from before access was revoked.
+  const raw = state?.status === "error" ? undefined : state?.data;
+  const invalidShape = raw !== undefined && !Array.isArray(raw);
+  const events = Array.isArray(raw) ? raw : EMPTY_EVENTS;
+  const memberData = members?.status === "error" ? undefined : members?.data;
+  const relayIdentity =
+    relaySelf?.status === "error" ? undefined : relaySelf?.data;
+  const profiles = useLoadedProfiles(events, pubkey, memberData, relayIdentity);
+  const timeline = useMemo(
+    () =>
+      formatTimelineMessages(
+        events,
+        channel,
+        pubkey,
+        null, // Avatar is irrelevant to flag labels.
+        profiles,
+        memberData,
+        undefined,
+        undefined,
+        relayIdentity,
+      ),
+    [events, channel, pubkey, profiles, memberData, relayIdentity],
+  );
+  const rows = useMemo(
+    () => selectLoadedFlags(timeline, mode, query),
+    [timeline, mode, query],
+  );
   return (
     <section
       className="mx-2 my-2 space-y-2 rounded-md border p-2 text-sm"
@@ -39,181 +78,88 @@ function FlagControls(props: Props) {
     >
       <h3 className="font-medium">Flagged threads</h3>
       <p className="text-xs text-muted-foreground">
-        Flags on the first message. Completed threads are hidden from active
-        views.
+        Only messages already loaded in this channel. Older, unloaded threads
+        are not searched.
       </p>
       <select
         aria-label="Thread flag filter"
         className="w-full rounded border bg-background p-1"
         value={mode}
-        onChange={(e) => setMode(e.target.value as FlagMode)}
+        onChange={(e) => {
+          setMode(e.target.value as FlagMode);
+          setLimit(50);
+        }}
       >
         <option value="active">Active</option>
         <option value="coordinate">🚩 Coordinating</option>
         <option value="progress">🔴 In progress</option>
         <option value="complete">☑️ Completed</option>
-        <option value="all">All flags</option>
+        <option value="all">All loaded flags</option>
       </select>
       <input
         aria-label="Search flagged threads"
-        placeholder="Search thread text"
+        placeholder="Search loaded thread text"
         maxLength={200}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setLimit(50);
+        }}
         className="w-full rounded border bg-background p-1"
       />
-      {text !== q ? (
-        <p role="status">Updating search…</p>
-      ) : (
-        <FlagResults
-          key={JSON.stringify([mode, q])}
-          {...props}
-          mode={mode}
-          q={q}
-        />
-      )}
-    </section>
-  );
-}
-
-function FlagResults({
-  channelId,
-  relayUrl,
-  pubkey,
-  mode,
-  q,
-  onOpen,
-  fetchPage = fetchFlags,
-}: Props & { mode: FlagMode; q: string }) {
-  const [rows, setRows] = useState<FlagRow[]>([]);
-  const [page, setPage] = useState<FlagPage | null>(null);
-  const [pages, setPages] = useState(0);
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const ticket = useRef(0);
-  const polling = useRef({ paused: false, busy: false });
-  const request = useCallback(
-    async (previous: FlagPage | null) => {
-      const current = ++ticket.current;
-      polling.current = { paused: false, busy: true };
-      setBusy(true);
-      setError(null);
-      if (!previous) {
-        setRows([]);
-        setPage(null);
-        setPages(0);
-      }
-      try {
-        const result = await fetchPage(
-          { channelId, relayUrl, pubkey },
-          { mode, q, limit: 50, cursor: previous?.next_cursor ?? null },
-        );
-        if (ticket.current !== current) return;
-        setRows((old) =>
-          previous
-            ? [
-                ...old,
-                ...result.rows.filter((r) => !old.some((o) => o.id === r.id)),
-              ]
-            : result.rows,
-        );
-        setPage(result);
-        setPages((n) => (previous ? n + 1 : 1));
-      } catch (e) {
-        if (ticket.current !== current) return;
-        setRows([]);
-        setPage(null);
-        setPages(0);
-        polling.current.paused = true;
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (ticket.current === current) {
-          polling.current.busy = false;
-          setBusy(false);
-        }
-      }
-    },
-    [channelId, relayUrl, pubkey, mode, q, fetchPage],
-  );
-  useEffect(() => {
-    void request(null);
-    const refresh = () => {
-      if (!document.hidden && !polling.current.paused && !polling.current.busy)
-        void request(null);
-    };
-    const interval = setInterval(refresh, 30_000);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      ++ticket.current;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [request]);
-  return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        className="rounded border px-2 py-1"
-        disabled={busy}
-        onClick={() => void request(null)}
-      >
-        Refresh flags
-      </button>
-      <p className="text-xs text-muted-foreground">
-        Refreshes every 30 seconds while visible.
-      </p>
-      {busy && <p role="status">Loading flags…</p>}
-      {error && (
-        <p role="alert" className="text-destructive">
-          {error} Automatic refresh paused; use Refresh flags to retry.
+      {state?.status === "error" || invalidShape ? (
+        <p role="alert">
+          Loaded messages are unavailable. Retry from the conversation.
         </p>
-      )}
-      {!busy && !error && rows.length === 0 && <p>No matching threads.</p>}
-      <ul className="max-h-64 space-y-1 overflow-y-auto">
-        {rows.map((row) => (
-          <li key={row.id}>
+      ) : !state?.data ? (
+        <p role="status">
+          No messages loaded yet. Open the conversation to load messages.
+        </p>
+      ) : rows.length === 0 ? (
+        <p>No matching flags in loaded messages.</p>
+      ) : null}
+      <ul className="space-y-1">
+        {rows.slice(0, limit).map(({ message, flags }) => (
+          <li key={message.id}>
             <button
               type="button"
-              className="w-full rounded p-1 text-left hover:bg-accent"
-              aria-label={`${row.flags.map((f) => (f === "☑" ? "☑️" : f)).join(" ")} ${row.title.trim() || "Untitled thread"}`}
+              className="w-full rounded px-1 py-1 text-left hover:bg-accent"
               onClick={() =>
                 onOpen(
                   {
-                    eventId: row.id,
-                    threadRootId: row.id,
-                    content: row.title,
-                    pubkey: row.pubkey,
-                    createdAt: row.created_at,
+                    eventId: message.id,
+                    threadRootId: message.id,
+                    content: message.body,
+                    pubkey: message.pubkey ?? "",
+                    createdAt: message.createdAt,
                     kind: 9,
-                    channelId,
-                    channelName: null,
+                    channelId: channel.id,
+                    channelName: channel.name,
                     score: 0,
                   },
-                  q,
+                  query,
                 )
               }
             >
-              <span>
-                {row.flags.map((f) => (f === "☑" ? "☑️" : f)).join(" ")}{" "}
-              </span>
-              <bdi>{row.title.trim() || "Untitled thread"}</bdi>
+              <span>{flags.map((f) => (f === "☑" ? "☑️" : f)).join(" ")} </span>
+              <bdi>
+                {Array.from(message.body.replace(/\s+/g, " ").trim())
+                  .slice(0, 240)
+                  .join("") || "Untitled thread"}
+              </bdi>
             </button>
           </li>
         ))}
       </ul>
-      {page?.has_more && pages < 5 && (
+      {rows.length > limit && (
         <button
           type="button"
           className="rounded border px-2 py-1"
-          disabled={busy}
-          onClick={() => void request(page)}
+          onClick={() => setLimit((n) => n + 50)}
         >
-          Load more threads
+          Show more loaded flags
         </button>
       )}
-      {page?.has_more && pages >= 5 && (
-        <p>Narrow your search to find older threads.</p>
-      )}
-    </div>
+    </section>
   );
 }
